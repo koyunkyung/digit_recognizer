@@ -1,3 +1,5 @@
+### define a simple CNN model for MNIST ###
+
 import torch.nn as nn
 import torch.nn.functional as F
 

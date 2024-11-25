@@ -1,60 +1,88 @@
-### load and preprocess the MNIST dataset ###
-
+import pandas as pd
 import torch
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
-def get_data_transforms():
+def normalize_tensor(tensor):
     """
-    Defines transformations for training and testing datasets.
-    - Normalizes pixel values to range [-1, 1]
-    - Adds random augmentation (e.g. rotation) for training data
+    Normalize a tensor to the range [-1, 1].
+    Args:
+        tensor (torch.Tensor): Input tensor.
+    Returns:
+        torch.Tensor: Normalized tensor.
+    """
+    return (tensor / 255.0 - 0.5) / 0.5  # Normalize to range [-1, 1]
+
+def load_kaggle_data(train_path="./data/train.csv", test_path="./data/test.csv"):
+    """
+    Loads Kaggle's MNIST dataset from CSV files.
+
+    Args:
+        train_path (str): Path to the Kaggle train.csv file.
+        test_path (str): Path to the Kaggle test.csv file.
 
     Returns:
-        train_transform: Transformations for training data
-        test_transform: Transformations for test data
+        train_images: Tensor of training images.
+        train_labels: Tensor of training labels.
+        test_images: Tensor of test images.
     """
-    train_transform = transforms.Compose([
-        transforms.RandomRotation(10),           # Augmentation: Rotate images randomly
-        transforms.ToTensor(),                  # Convert PIL images to PyTorch tensors
-        transforms.Normalize((0.5,), (0.5,))    # Normalize to mean=0.5, std=0.5
-    ])
+    # Load train.csv
+    train_data = pd.read_csv(train_path)
+    train_labels = torch.tensor(train_data["label"].values, dtype=torch.long)
+    train_images = torch.tensor(train_data.drop("label", axis=1).values, dtype=torch.float32).reshape(-1, 1, 28, 28)
 
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+    # Load test.csv
+    test_data = pd.read_csv(test_path)
+    test_images = torch.tensor(test_data.values, dtype=torch.float32).reshape(-1, 1, 28, 28)
 
-    return train_transform, test_transform
+    return train_images, train_labels, test_images
 
-
-def get_data_loaders(batch_size=64, data_dir="./data"):
+def extract_from_subset(subset):
     """
-    Loads the MNIST dataset and returns DataLoader objects for training and testing.
+    Extracts the tensors from a Subset object.
+    Args:
+        subset (torch.utils.data.Subset): Subset object containing the data.
+    Returns:
+        tensors: Tuple of extracted tensors (images, labels).
+    """
+    images = torch.stack([subset.dataset[i][0] for i in subset.indices])
+    labels = torch.tensor([subset.dataset[i][1] for i in subset.indices])
+    return images, labels
+
+def get_data_loaders(batch_size=64, train_path="./data/train.csv", test_path="./data/test.csv"):
+    """
+    Creates DataLoader objects for training, validation, and testing datasets.
 
     Args:
         batch_size (int): Number of samples per batch.
-        data_dir (str): Directory to download and store the dataset.
+        train_path (str): Path to Kaggle's train.csv file.
+        test_path (str): Path to Kaggle's test.csv file.
 
     Returns:
-        train_loader: Dataloader for training data.
-        val_loader: Dataloader for validation data.
+        train_loader: DataLoader for training data.
+        val_loader: DataLoader for validation data.
+        test_loader: DataLoader for test data.
     """
-    # get transformation
-    train_transform, test_transform = get_data_transforms()
+    # Load Kaggle data
+    train_images, train_labels, test_images = load_kaggle_data(train_path, test_path)
 
-    # download and load datasets
-    train_dataset = datasets.MNIST(root="./data", train=True, transform=train_transform, download=True)
-    test_dataset = datasets.MNIST(root="./data", train=False, transform=test_transform, download=True)
+    # Normalize the images
+    train_images = normalize_tensor(train_images)
+    test_images = normalize_tensor(test_images)
 
-    # split training dataset into train/validation sets
-    train_size = int(0.9 * len(train_dataset))
-    val_size = len(train_dataset) - train_size
-    train_subset, val_subset = torch.utils.data.random_split(train_dataset, [train_size, val_size])
+    # Split training data into train/validation sets (90% train, 10% validation)
+    train_size = int(0.9 * len(train_images))
+    val_size = len(train_images) - train_size
+    train_subset, val_subset = torch.utils.data.random_split(
+        list(zip(train_images, train_labels)), [train_size, val_size]
+    )
 
-    # create DataLoaders
-    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    # Extract images and labels from subsets
+    train_images, train_labels = extract_from_subset(train_subset)
+    val_images, val_labels = extract_from_subset(val_subset)
+
+    # Create DataLoader objects
+    train_loader = DataLoader(TensorDataset(train_images, train_labels), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(val_images, val_labels), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(TensorDataset(test_images), batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, test_loader
